@@ -1,0 +1,255 @@
+---
+title: "DM Final"
+author: "Chen Zhang"
+date: "December 5, 2018"
+output: word_document
+---
+
+### Data Reading
+
+#### 1.Read the Biodeg data into R.
+
+```{r,echo=TRUE}
+bio.data = read.csv("Biodeg.csv",header = T,sep = ",")
+```
+
+###2.V29, V24, and V25 are factor variables. Convert them to factor variables. 
+```{r,echo=TRUE}
+bio.data$V29 = as.factor(bio.data$V29)
+bio.data$V24 = as.factor(bio.data$V24)
+bio.data$V25 = as.factor(bio.data$V25)
+class(bio.data$V29);class(bio.data$V24);class(bio.data$V25)
+```
+
+### 3. Partition the data to 50% train data and 50% test data. 
+**Use set.seed(123) for the sampling. **
+```{r}
+set.seed(123)
+train.sample = sample(1:dim(bio.data)[1],dim(bio.data)*0.5, replace = FALSE)
+test.sample = -train.sample
+train = bio.data[train.sample,]
+test = bio.data[test.sample,]
+```
+
+
+**For any cross-validation or randomForest running use set.seed(1)  before running any model or cross-validation. **
+
+### Tree Model
+
+### 1.Build tree model on train data and prune it using best tree size to classify V42 (RB or NRB) type using V1 through V41. What is best tree size? 
+```{r}
+library(tree)
+set.seed(1)
+tree.bio = tree(V42~., data=train)  #build a tree model
+
+#prune the tree
+cv.bio = cv.tree(tree.bio, FUN=prune.misclass)
+cv.bio
+
+prune.bio = prune.misclass(tree.bio, best=7)
+prune.bio
+```
+
+Based on the result, we can find the lowest dev. In this case, the best tree size is 7.
+
+### 2.Plot the tree. What variables are used in building the optimal trees? 
+```{r, fig.height=3,fig.width=5}
+plot(prune.bio)
+text(prune.bio,pretty=0)
+```
+
+Based on the plot, we can see that V1, V16,V12,V36,V39,V15 are used in building the optimal trees.
+
+### 3.Apply the model to the test data and get the confusion matrix and error rate for each class and overall accuracy.  
+```{r}
+tree.y = test$V42
+tree.pred = predict(prune.bio, newdata = test,type = "class")
+table(tree.y , tree.pred)
+error.tree.NRB = 58/(298+58)
+error.tree.RB = 56/(56+114)
+error.tree = mean (tree.y != tree.pred)
+error.tree
+```
+
+Based on the confusion matrix, we can see that error rate of class 'NBR' is `r error.tree.NRB` , the error rate of class 'RB' is `r 1-error.tree.RB`. The overall accuracy is `r error.tree`. 
+
+### Random Forest and Bagging
+
+#### 4. Using the train data, build a bagging model and get OOB error rate and apply it to the test data and get error rate. Use ntree = 500.
+
+```{r}
+set.seed(1)
+library(randomForest)
+nvar = dim(bio.data)[2]-1
+bag.bio = randomForest(V42~.,data=train,mtry=nvar,ntree=500,importance=T)
+bag.bio
+bag.bio$err.rate[500,1]   #out of bag error rate
+
+#apply to test
+bag.pred = predict(bag.bio, newdata = test, type = "class")
+table(bag.pred , tree.y)
+bag.error = mean(bag.pred != tree.y)
+bag.error
+```
+
+Based on the result, the OOB error is `r bag.bio$err.rate[500,1]`. When applying to test data, the error rate is `r bag.error`. 
+
+#### 5.	Using the train data, build a random Forest Model using the best mtry and get OOB error rate. Use ntree =500. Try for mtry=sqrt(41)-1, sqrt(41), sqrt(41)+1.
+```{r}
+set.seed(1)
+bio.rf1 = randomForest(V42~., data=train, ntree=500,mtry=sqrt(nvar)-1,importance = TRUE)
+set.seed(1)
+bio.rf2 = randomForest(V42~., data=train, ntree=500,mtry=sqrt(nvar),importance = TRUE)
+set.seed(1)
+bio.rf3 = randomForest(V42~., data=train, ntree=500,mtry=sqrt(nvar)+1,importance = TRUE)
+bio.rf.compare = data.frame('mtry'=c('sqrt(41)-1','sqrt(41)', 'sqrt(41)+1'),'OOB error' = c(bio.rf1$err.rate[500,1],bio.rf2$err.rate[500,1],bio.rf3$err.rate[500,1]))
+bio.rf.compare
+```
+
+Based on the result, we need to find lowest OOB error which is `r bio.rf2$err.rate[500,1]`, in this case, the best model is when mtry = sqrt(41). 
+
+#### 6.	Find 20 most important variables used in this random Forest. 
+```{r,fig.height=8,fig.width=6}
+import_var = round(importance(bio.rf2),2)
+varImpPlot(bio.rf2)
+```
+
+The 20 important variables are V36,V1,V22,V27,V39,V12,V15,V16,V13,V2,V37,V30,V18,V10,V8,V31,V17,V14,V28,V3. 
+
+
+#### 7.	Find the outlying-ness score from proximity matrix and plot them. Are there any outliers? 
+```{r,fig.height=3, fig.width=5}
+set.seed(1)
+bio.prox = randomForest(V42~.,data=train, proximity=TRUE,oob.prox=FALSE)
+out = apply(bio.prox$proximity,1 , function(x) 1/(sum(x^2)-1))
+plot(out,pch="*")
+outlier = sort(out,decreasing = T)
+outlier[1:10]
+```
+Based on the result ,outliers score should be bigger than 5 or 10, in this case, there is no outliers.
+
+#### 8.	Apply it to the test data and get confusion matrix and error rates for each class and overall error rate. 
+```{r}
+rf.pred = predict(bio.rf2, newdata=test, type = "class")
+table(tree.y , rf.pred)
+error.rf.NBR = 39/(317+39)
+error.rf.RB = 37/(37+133)
+error.rf = mean(tree.y != rf.pred)
+error.rf
+```
+
+Based on the confusion matrix, we can see that error rate of class NBR is `r error.rf.NBR `, the error rate of class RB is `r error.rf.RB`. And the overall error rate is `r error.rf`. 
+
+### GAM 
+
+#### 9.	Based on 20 most important variables selected in Random Forest model above, build a gam model for V42 on train data.
+```{r}
+library(gam)
+bio.gam = gam(V42 ~s(V36)+s(V1)+s(V22)+s(V27)+s(V39)+s(V12)+s(V15)+s(V16)+s(V13)+s(V2)+s(V37)+s(V30)+s(V18)+s(V10)+s(V8)+s(V31)+s(V17)+s(V14)+s(V28)+s(V3),data=train, family = "binomial")
+summary(bio.gam)
+```
+
+
+#### 10.	What variables have non-linear effect?
+
+Based on the Anova for nonparametric effects, if the p value is smaller than 0.05, we can say that it has non-linear effect. In this case, V22, V12, V16, V37,V30 have non-linear effect.
+
+#### 11.	Apply the model to the test data and get the confusion matrix. Find overall error rates and error rates for individual class (spam and email class).  
+
+```{r}
+prob.bio= predict(bio.gam,newdata = test, type="response")
+le = levels(tree.y)
+pred.bio = ifelse(prob.bio >= 0.5, le[2],le[1])
+table(tree.y,pred.bio)
+gam.error.NBR = 36/(36+304)
+gam.error.RB = 50/(50+136)
+gam.error = mean(tree.y != pred.bio)
+gam.error
+```
+
+Based on the confusion matrix, we can see that error rate of class NBR is `r gam.error.NBR `, the error rate of class RB is `r gam.error.RB`. And the overall error rate is `r gam.error`. 
+
+
+### SVM 
+
+#### 12. Build a svm model to classify V42 using V1 through V41 on train data. Use “radial” kernel function and find the best gamma and cost first. What are the best gamma and cost? What’s error rate for the optimal gamma and cost? Try among the cost=c(0.001, 0.01, 0.1, 1, 10,100) and  gamma=c(.01,.1,1,5,10)
+```{r}
+library(e1071)
+set.seed(1)
+svm.bio = tune(svm,V42~.,data=train,kernel="radial",
+               ranges=list(cost=c(0.001, 0.01, 0.1, 1, 10,100),
+                           gamma=c(.01,.1,1,5,10)))
+svm.best = svm.bio$best.model
+svm.bio$best.parameters
+svm.bio$best.performance
+```
+
+Based on the result, the best cost is 1 and the best gamma is 0.1 , the error rate of optimal cost and gamma is `r svm.bio$best.performance`.
+
+#### 13. Apply the model to the test data and get the confusion matrix and error rates.
+```{r}
+svm.pred = predict(svm.best,newdata = test)
+table(tree.y, svm.pred)
+svm.error = mean(tree.y != svm.pred)
+svm.error
+```
+
+
+#### 14.Compare error rates of the best tree, bagging, random Forest, gam, and svm for the predicted values on test data above. Which model do you prefer?
+
+```{r}
+compare.model = data.frame('model' = c('best tree','bagging','random forest','gam','svm'), 'test error' =c(error.tree, bag.error,error.rf,gam.error,svm.error))
+compare.model
+```
+
+Based on the result, we can see that SVM has the lowest test error which is `r svm.error`. 
+
+### Clustering
+
+#### 15.For the training data eliminate factor variables V24,V25, V29 and V42 and scale the data. Find the optimal number of clusters using average silhouette length test.  (Use manhattan distance and method = "complete" for scaled data.) It may take around 7-10 minutes so run it using separate Rmd file or run it using R script file and add the result in word file.
+```{r}
+cluster.data = train[,-c(24,25,29,42)]
+cluster.data = scale(cluster.data)
+
+#Based on the result, the best cluster is 2. 
+```
+
+
+
+#### 16.Using the above result, find kmeans cluster with the optimal number of clusters  above.
+```{r,fig.height=3,fig.width=5}
+set.seed(1)
+km.bio = kmeans(cluster.data,2,nstart = 40 )
+plot(cluster.data, col=(km.bio$cluster +1),main="K-Means Clustering Result",pch="*")
+```
+
+
+#### 17.Using table function, explain how the clusters corresponds to the V42. Do you think clustering can be used in classifying V42? Compare it to the above classification methods. 
+
+```{r}
+cluster.y = train$V42
+table(cluster.y,km.bio$cluster)
+(30+150)/(194+150+30+152)
+```
+
+In the cluster 1, there has 194 belong to NRB class, and 30 belongs to RB class, Based on majority vote, we can see that class 1 represents NRB. In cluster 2, we have 150 are NBR class, and 152 are RB class. If we say cluster 1 are NBR but we can't say that cluster 2 represents RB class, becasue the data is too close. if we want to calculate error rate, we can assume that culster1 represents NRB class, and cluster represents RB class, then the error rate will be (30+150)/(194+150+30+152) = `r (30+150)/(194+150+30+152)`, which is pretty high. Much higher than above classfication methods. I think we can't use clustering in classifying v42, becasue clustering is unsurpervised learning, which means that response varibales are unknown. What's more, NbClust function couldn't define the exact number of clusters. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
