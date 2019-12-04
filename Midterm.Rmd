@@ -1,0 +1,339 @@
+---
+title: "Zhang.Chen"
+author: "Chen Zhang"
+date: "10/18/2018"
+output: word_document
+---
+
+#Bootstrap
+set.seed(123); data=rnorm(200)
+The 90 percentile of data is estimated by quantile(data, 0.9, na.rm=TRUE) in R. We want to find the standard error of the estimated 90 percentile and 95 % confidence interval for the true 90 percentile of the population using bootstrap.
+
+###a)  Write an R function that calculates the 90 percentile of data to be used in boot function in b).
+```{r,echo=TRUE}
+set.seed(123)
+data=rnorm(200)
+boot.fn = function(data,index){
+  x=data[index]
+  return(as.numeric(quantile(x,0.9,na.rm=T)))
+}
+boot.fn(data=data)
+```
+
+###b)  Using boot function, find the standard error for the population 90 percentile and 95% CI from the data. Bootstrap size should be 1000.
+```{r}
+library(boot)
+set.seed(123)
+bt.result = boot(data=rnorm(200), boot.fn, R=1000)
+sd=sd(bt.result$t);sd
+lower = round((bt.result$t0-1.96*sd),digit=2)
+upper = round((bt.result$t0+1.96*sd),digit=2)
+ci =c(lower,upper);ci
+```
+The standard error is `r sd`,and the 95% CI is`r ci`.
+
+#Regression
+
+library(ISLR)(
+data(College)
+College data is statistics for a large number of US Colleges from the 1995 issue of US News and World Report. The data contains 777 observations on the 18 variables. The variable Grad.Rate is the graduation rate of each college. We want to build a prediction model for Grad.Rate from the data. 
+
+###1)Partition the College data to 70% training set and 30% test set. Use set.seed(1)
+```{r}
+library(ISLR)
+data.reg=College
+set.seed(1)
+train.col = sample(1:dim(data.reg)[1],dim(data.reg)*0.7,replace = FALSE)
+test.col <- -train.col
+train.reg = data.reg[train.col,]
+test.reg = data.reg[test.col,]
+```
+###2)From the linear model with all the variables in, find the best subset model for Grad.Rate for the training data using stepAIC. (may have to use glm function instead of lm).
+```{r}
+library(MASS)
+step.glm = glm(Grad.Rate~., data = train.reg)
+summary(step.glm, cor = F)
+reg.step = stepAIC(step.glm, trace =F)
+reg.step$anova
+```
+###3)What are the selected important variables?
+
+According to the result, The selected important variables are Apps,Top10perc,Top25perc,P.Undergrad,Outstate,Room.Board,Personal,perc.alumni,Expend.
+
+###4)Use LASSO method to the data and find selected important variables. 
+```{r}
+library(glmnet)
+set.seed(1)
+lasso.x = model.matrix(Grad.Rate~.,data.reg)[,-1]
+lasso.y = data.reg$Grad.Rate
+cv.out=cv.glmnet(lasso.x[train.col,],lasso.y[train.col],alpha=1)
+bestlam=cv.out$lambda.min
+lasso.model=glmnet(lasso.x[train.col,],lasso.y[train.col],alpha=1,lambda =bestlam)
+lasso.coef=predict(cv.out,type="coefficients",s=bestlam)
+lasso.coef
+```
+
+Based on the result, we see the important variables are PrivateYes, Apps,Top10perc,Top25perc,P.Undergrad,Outstate,Room.Board,Personal,PhD,,S.F.Ratio,perc.alumi,Expend.
+
+###5)Find the predicted Grad.Rate for the three models, the best stepAIC model, the model with all the variables-in, and LASSO  for the test data. Find and compare the test data R^2 value for the three models. Which one do you prefer? 
+```{r}
+#step AIC 
+test_y = data.reg$Grad.Rate[test.col]
+step.pred = predict(reg.step,newdata =test.reg)
+r.step = 1-sum((test_y-step.pred)^2)/sum((test_y-mean(test_y))^2)
+
+#all variable-in
+all.pred = predict(step.glm, newdata = test.reg)
+r.all = 1-sum((test_y-all.pred)^2)/sum((test_y-mean(test_y))^2)
+
+#Lasso
+lasso.pred = predict(lasso.model,s=bestlam,newx =lasso.x[test.col,])
+r.lasso = 1-sum((test_y-lasso.pred)^2)/sum((test_y-mean(test_y))^2)
+```
+**Compare R square for three models**
+```{r}
+com.model = data.frame('Model'=c('Best stepAIC model','all the variable-in','Lasso'),'R square' = c(r.step,r.all,r.lasso))
+com.model
+```
+Based on the result, we need to find the highest r square, I prefer the model with all variable in. 
+
+###6)Find PCA for College data without Grad.Rate and plot the first principle component and the second principle component. 
+```{r,fig.height=3,fig.width=5}
+pc.cr <- princomp(data.reg[,c(2:17)],cor = TRUE)
+plot(pc.cr$score[,1:2])
+```
+
+###7)How much variations are captured with these two components?
+```{r}
+variation=cumsum(pc.cr$sdev[1:2]^2)/sum(pc.cr$sdev^2)
+variation
+```
+About `r variation[2]*100`%  of variation is captured by first two principle component.
+
+###8)Run pcr for this data with Grad.Rate as response variable. How many components should you use? (Find the best number of components). 
+```{r}
+library(pls)
+pcr.fit=pcr(Grad.Rate~., data=data.reg,scale=TRUE, validation="CV")
+press=pcr.fit$validation$PRESS 
+bestcomp=which(press==min(press)) 
+bestcomp
+pcr.fit=pcr(Grad.Rate~., data=data.reg,scale=TRUE, validation="CV", ncomp=bestcomp)
+```
+Based on the result, `r bestcomp` principle components should be used.
+
+#Classification
+
+library(ElemStatLearn);data(spam)
+The spam data is used to construct a personalized spam filter. It contains 4601 observations on 58 variables. The spam variable is response variable. 
+
+###1)Partition the sample randomly to 70% training set and 30% test set. Use set.seed(123).
+```{r}
+library(ElemStatLearn)
+spam0 <- ifelse(spam$spam == "spam","yes","no") #yes means is spam, no means email.
+data.class=data.frame(spam[,c(1:57)],spam = factor(spam0)) #delete the original spam variable
+set.seed(123)
+train.spam = sample(1:dim(data.class)[1],dim(data.class)*0.7,replace = FALSE)
+test.spam = -train.spam
+train.data = data.class[train.spam,]
+test.data = data.class[test.spam,]
+class.test.y = data.class$spam
+```
+###2)Find the logistic regression with all the variables in and find 10-fold cross-validated error on training data. (to Ignore all the warning messages and eliminate from the file use:   suppressWarnings(SA.glm <- glm(spam~., data = spam[train,], family=binomial) ) 
+```{r}
+source("cv.R")
+suppressWarnings(log.model <- glm(spam~., data=train.data, family="binomial"))
+cv.log = CV.logistic(data=train.data, glmfit=log.model, 
+                    yname="spam", K=10, seed=123)
+cv.log$error
+```
+
+the error rate is `r cv.log$error`.
+
+###3)Find the best logistic regression model using stepAIC on training data. (It may take over 5 minutes)
+suppressWarnings(SA.glm2 <- stepAIC(SA.glm, trace = FALSE)) will do without warning messages.
+```{r}
+source("cv.R")
+suppressWarnings(step.fit <- glm(spam~.,data=train.data,family="binomial"))
+cv.step <- cv.stepAIC.logistic(data=train.data, glmfit = step.fit, K=10, seed=123)
+cv.step$best.model
+```
+
+According to the result, the best stepAIC model is
+spam ~ A.1 + A.2 + A.3 + A.4 + A.5 + A.6 + A.7 + A.8 + A.9 + 
+    A.16 + A.17 + A.20 + A.21 + A.23 + A.24 + A.25 + A.26 + A.27 + 
+    A.28 + A.29 + A.33 + A.34 + A.35 + A.36 + A.39 + A.41 + A.42 + 
+    A.43 + A.44 + A.45 + A.46 + A.48 + A.49 + A.52 + A.53 + A.54 + 
+    A.56 + A.57
+    
+###4)What is the 10-fold cross-validated error for the stepAIC model on training data? 
+```{r}
+cv.step.error = round(cv.step$Error,digit=6)
+cv.step.error
+```
+the 10-fold cross-validated error for the stepAIC model on training data is `r cv.step.error`.
+
+###5)Apply the above models to the test data and get the prediction confusion matrix and prediction error rates.
+```{r}
+#logistic model
+test.y = test.data$spam
+log.probs <- predict(log.model,newdata = test.data,type="response")
+le = levels(test.data$spam);le
+log.test.pred = ifelse(log.probs>= 0.5,le[2],le[1])
+table(log.test.pred,test.y)
+log.test.error <- mean(log.test.pred != test.y)
+round(log.test.error,digits = 6)
+
+#stepAIC
+suppressWarnings(step.model <- glm(spam ~ A.1 + A.2 + A.3 + A.4 + A.5 + A.6 + A.7 + A.8 + A.9 + A.16 + A.17 + A.20 + A.21 + A.23 + A.24 + A.25 + A.26 + A.27 + A.28 + A.29 + A.33 + A.34 + A.35 + A.36 + A.39 + A.41 + A.42 + A.43 + A.44 + A.45 + A.46 + A.48 + A.49 + A.52 + A.53 + A.54 + A.56 + A.57,data = train.data,family="binomial"))
+step.pred.probs <- predict(step.model,newdata=test.data,type="response")
+le1 = levels(test.data$spam);le1
+step.test.pred <- ifelse(step.pred.probs >= 0.5, le[2],le[1])
+table(step.test.pred,test.y)
+step.test.error <- mean(step.test.pred != test.y)
+round(step.test.error,digit=6)
+
+```
+
+###6)Plot ROC curves and find the area under ROC curve.
+```{r}
+library(pROC)
+#logistic roc
+log.roc <- roc(response = test.y,
+              predictor = log.probs,
+              levels = rev(levels(test.y))) 
+#stepAIC roc
+stepaic.roc <- roc(response = test.y,
+                   predictor = step.pred.probs,
+                   levels=rev(levels(test.y)))
+par(mfrow=c(1,2))
+plot(log.roc)
+plot(stepaic.roc)
+
+models.auc <- data.frame('model'=c('logistic model','stepAIC for log'),'AUC'=c(log.roc$auc,stepaic.roc$auc))
+models.auc
+```
+
+###7)Compare two models in error rates. Which model do you prefer?
+```{r}
+models.error <- data.frame('model'=c('Logistic Model','stepAIC of logistic'),'error train' = c(cv.log$error,cv.step$Error),'error test'=c(log.test.error,step.test.error))
+models.error
+```
+Based on the result, we can see that logistic model with all variable in has higher train error but lower test error. From the book we learnt, we care about test error, therefore, logistic model is perferred.
+
+###8)Find the best K on knn model using cv.knn on training data. (try K=1:200)
+```{r}
+source("cv.R")
+set.seed(123)
+default.knn = NULL; knn.error=NULL
+
+for (i in 1:200) {
+ default.knn<- CV.knn(knn.data=train.data, knn.xname=c('A.1','A.2','A.3','A.4','A.5','A.6','A.7','A.8','A.9','A.10','A.11','A.12','A.13','A.14','A.15','A.16','A.17','A.18','A.19','A.20','A.21','A.22','A.23','A.24','A.25','A.26','A.27','A.28','A.29','A.30','A.31','A.32','A.33','A.34','A.35','A.36','A.37','A.38','A.39','A.40','A.41','A.42','A.43','A.44','A.45','A.46','A.47','A.48','A.49','A.50','A.51','A.52','A.53','A.54','A.55','A.56','A.57'), knn.yname="spam",knn.k.fold=10,knn.seed_kfold=123,k=i)
+ knn.error[i] <- default.knn$knn_error
+}
+min_error <- min(knn.error)
+best.k <- which(knn.error == min_error)
+print(best.k)
+```
+
+###9)What is the 10-fold cross-validated error rate for the knn for the best k on training data.
+```{r}
+knn.bestk.error <- CV.knn(knn.data=train.data, knn.xname=c('A.1','A.2','A.3','A.4','A.5','A.6','A.7','A.8','A.9','A.10','A.11','A.12','A.13','A.14','A.15','A.16','A.17','A.18','A.19','A.20','A.21','A.22','A.23','A.24','A.25','A.26','A.27','A.28','A.29','A.30','A.31','A.32','A.33','A.34','A.35','A.36','A.37','A.38','A.39','A.40','A.41','A.42','A.43','A.44','A.45','A.46','A.47','A.48','A.49','A.50','A.51','A.52','A.53','A.54','A.55','A.56','A.57'), knn.yname="spam",knn.k.fold=10,knn.seed_kfold=123,k=best.k)
+knn.bestk.error <- round(knn.bestk.error$knn_error,digit=6)
+knn.bestk.error
+```
+the 10 fold cv error rate for the knn for the best k on training data is `r knn.bestk.error`.
+
+###10)Apply best knn model (best k selected from the training data) to the test data and get the error rate for the test data.
+```{r}
+set.seed(123)
+knn.data <- scale(data.class[,c(-58)])
+
+knn.training_data = scale(knn.data[train.spam,])
+knn.testing_data = scale(knn.data[test.spam,])
+knn.training_y <- data.class$spam[train.spam]
+knn.testing_y <- data.class$spam[test.spam]
+knn.pred_y = knn(knn.training_data,knn.testing_data,knn.training_y,k=best.k)
+table(knn.pred_y,knn.testing_y)
+knn.test.error = mean(knn.pred_y != knn.testing_y)
+knn.test.error1=round(knn.test.error, digit=6)
+```
+Based on the result, the test error of knn is `r knn.test.error1`. 
+
+###11)Build the LDA and QDA model and find 10-fold cross-validate error rates on training data.
+```{r}
+source("cv.R")
+#LDA
+lda.train<- CV.lda(lda_data=train.data,ldamodel=spam~.,lda_yname="spam",lda_k=10, lda_seed=123)
+lda.train.error <- round(lda.train$lda_error,digit=6)
+lda.train.error
+
+#QDA
+qda.train <- CV.qda(qda_data=train.data, qdamodel=spam~.-A.32-A.41, qda_yname="spam", qda_k=10, qda_seed=123)
+# I can't run qda model because A.32 and A.41 have exactly liner relationship, therefore, we need to exclude those two variables.
+qda.train.error <- round(qda.train$qda_error,digit=6)
+qda.train.error
+```
+
+###12)Apply the LDA and QDA models above to the test data. What are the error rates?
+```{r}
+#lda
+lda.train.model <- lda(lda.train$call,data=train.data)
+lda_pred <- predict(lda.train.model,test.data)
+lda_pred_y <- lda_pred$class
+table(lda_pred_y, test.y)
+lda.test.error <- mean(lda_pred_y != test.y)
+round(lda.test.error,digit=6)
+
+#QDA
+qda.train.model <- qda(qda.train$call,data=train.data)
+qda.pred <- predict(qda.train.model, test.data)
+qda_pred_y <- qda.pred$class
+table(qda_pred_y,test.y)
+qda.test.error <- mean(qda_pred_y != test.y)
+round(qda.test.error,digit=6)
+```
+Based on the result, the test error of lda is `r round(lda.test.error,digit=6)`, the test error of qda is `r round(qda.test.error,digit=6)`.
+
+###13)Run lasso on training data and get 10-fold cross-validate error rates on training data.
+```{r}
+source("cv.R")
+lasso.train <- cv.Lasso(data=train.data,model=spam~.,yname="spam", Kfold=10,seed=123, alpha=1)
+lasso.train.error <- round(lasso.train$lasso.error,digit=6)
+lasso.train.error
+```
+
+###14)Apply the lasso model (training data and the best lamda) to the test data. Get the error rates.
+```{r}
+lasso.trainx = model.matrix(lasso.train$call,data=train.data)[,-1]
+lasso.trainy = data.class$spam[train.spam]
+lasso.testx <- scale(test.data[,-58])
+lasso.train.model = glmnet(lasso.trainx,lasso.trainy,alpha=1,family = "binomial",lambda =lasso.train$bestlam)
+lasso.prob = predict(lasso.train.model,s=lasso.train$bestlam,newx=lasso.testx,type="response")
+le3 <- levels(test.data$spam);le3
+lasso.pred <- ifelse(lasso.prob >= 0.5,le3[2],le3[1])
+lasso.test.error <- mean(lasso.pred != test.y)
+lasso.test.error
+```
+
+The error rate of lasso is `r lasso.test.error`.
+
+###15)Among the six models (glm with all variables in, stepAICglm, lasso, knn, lda, qda) which one do you prefer based on training data? (Must compare cross-validated errors on training data)
+```{r}
+training.error <- data.frame('Model'=c('glm with all variable-in','stepAICglm','knn','lda','qda','lasso'),'train error'=c(cv.log$error,cv.step.error,knn.bestk.error,lda.train.error,qda.train.error,lasso.train.error))
+training.error
+```
+
+based on the result, we select the lowest training error which is lasso model with best lambda. 
+
+###16)Among the six models (glm with all variables in, stepAICglm, lasso, knn, lda, qda) which one do you prefer based on predictions on test data? (Must use training data for modling and apply the fitted model to the test data.) 
+```{r}
+testing.error <- data.frame('Model'=c('glm with all variable-in','stepAICglm','knn','lda','qda','lasso'),'test error'=c(log.test.error,step.test.error,knn.test.error,lda.test.error,qda.test.error,lasso.test.error))
+testing.error
+```
+
+According to the result, we select the lowest test error, which is glm with all variable-in. 
+
+
+
+
+
